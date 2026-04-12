@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     /* ════════════════════════════════════════════════════════════════
        🖼️  BACKGROUND IMAGE — change ONE line below to update ALL screens
@@ -449,6 +450,56 @@
 <div id="root"></div>
 <script type="text/babel">
 const {useState,useEffect,useRef,useMemo,useCallback}=React;
+
+// ════════════════════════════════════════════════════════════════
+// 🌍 SUPABASE CONFIG
+// ════════════════════════════════════════════════════════════════
+const SUPABASE_URL = 'https://hppkcrslsliedukfmpkjz.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhwcGtjcmxzbGllZHVrZm1wa2p6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU5OTQ3NTMsImV4cCI6MjA5MTU3MDc1M30.9NPj2TmjsmwI3P0Z96b7SmwSRoZynFRFzj060ynJM70';
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Save score to leaderboard
+async function saveScoreToLeaderboard(username, score, total, timeSeconds, subject) {
+  try {
+    const { data, error } = await supabase.from('jamb_leaderboard').insert([
+      {
+        username,
+        score,
+        total,
+        percentage: Math.round((score / total) * 100),
+        time_seconds: timeSeconds,
+        subject,
+        created_at: new Date().toISOString()
+      }
+    ]);
+    if (error) console.error('Leaderboard save error:', error);
+    return data;
+  } catch (err) {
+    console.error('Save score error:', err);
+  }
+}
+
+// Fetch top leaderboard scores
+async function fetchLeaderboard(limit = 10, subject = null) {
+  try {
+    let query = supabase
+      .from('jamb_leaderboard')
+      .select('username, score, total, percentage, time_seconds, subject, created_at')
+      .order('percentage', { ascending: false })
+      .order('time_seconds', { ascending: true })
+      .limit(limit);
+    
+    if (subject) query = query.eq('subject', subject);
+    
+    const { data, error } = await query;
+    if (error) console.error('Leaderboard fetch error:', error);
+    return data || [];
+  } catch (err) {
+    console.error('Fetch leaderboard error:', err);
+    return [];
+  }
+}
 
 /* ═══════════════ QUESTION BANK ═══════════════ */
 const QUESTION_BANK = [
@@ -1222,6 +1273,8 @@ function App(){
   const [score,setScore]=useState(0);
   const [timeTaken,setTimeTaken]=useState(0);
   const [showReview,setShowReview]=useState(false);
+  const [leaderboard,setLeaderboard]=useState([]);
+  const [loadingLeaderboard,setLoadingLeaderboard]=useState(false);
 
   const answersRef=useRef({});
   const submittedRef=useRef(false);
@@ -1230,6 +1283,17 @@ function App(){
 
   useEffect(()=>{answersRef.current=answers;},[answers]);
   useEffect(()=>{if(savedUser)setScreen('stream');},[]);
+
+  // Fetch leaderboard when results screen opens
+  useEffect(()=>{
+    if(screen==='results'){
+      setLoadingLeaderboard(true);
+      fetchLeaderboard(10, null).then(data=>{
+        setLeaderboard(data);
+        setLoadingLeaderboard(false);
+      });
+    }
+  },[screen]);
 
   // Filtered pool count
   const filteredPool=useMemo(()=>{
@@ -1356,7 +1420,13 @@ function App(){
     const a=answersRef.current,qs=testQRef.current;
     let c=0;qs.forEach((q,i)=>{if(a[i]===q.correct)c++;});
     setScore(c);
-    setTimeTaken(Math.floor((Date.now()-startTimeRef.current)/1000));
+    const timeSec=Math.floor((Date.now()-startTimeRef.current)/1000);
+    setTimeTaken(timeSec);
+    
+    // Save to leaderboard
+    const subject=subjectTab.charAt(0).toUpperCase()+subjectTab.slice(1);
+    saveScoreToLeaderboard(savedUser, c, qs.length, timeSec, subject);
+    
     setScreen('results');
   };
 
@@ -1821,6 +1891,38 @@ function App(){
           <button onClick={logout} className="results-btn secondary">
             Log out
           </button>
+
+          {/* 🌍 Global Leaderboard */}
+          <div style={{marginTop:'32px',padding:'20px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'16px'}}>
+            <div style={{fontSize:'16px',fontWeight:800,color:'var(--text)',marginBottom:'16px',display:'flex',alignItems:'center',gap:'8px'}}>
+              🏆 Global Top 10 Scores
+            </div>
+            {loadingLeaderboard?(
+              <p style={{fontSize:'14px',color:'var(--text-muted)',textAlign:'center',padding:'20px'}}>Loading leaderboard...</p>
+            ):leaderboard.length>0?(
+              <div style={{display:'flex',flexDirection:'column',gap:'10px'}}>
+                {leaderboard.map((entry,idx)=>(
+                  <div key={idx} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px',background:'var(--surface-alt)',borderRadius:'10px',border:'1px solid var(--border)'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'12px',flex:1}}>
+                      <span style={{fontSize:'18px',fontWeight:800,color:'var(--accent)',minWidth:'28px',textAlign:'center'}}>
+                        {idx===0?'🥇':idx===1?'🥈':idx===2?'🥉':idx+1}
+                      </span>
+                      <div>
+                        <div style={{fontSize:'14px',fontWeight:700,color:'var(--text)'}}>{entry.username}</div>
+                        <div style={{fontSize:'11px',color:'var(--text-muted)',textTransform:'capitalize'}}>{entry.subject}</div>
+                      </div>
+                    </div>
+                    <div style={{textAlign:'right'}}>
+                      <div style={{fontSize:'15px',fontWeight:800,color:'var(--green)'}}>{entry.percentage}%</div>
+                      <div style={{fontSize:'11px',color:'var(--text-muted)'}}>{entry.score}/{entry.total}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ):(
+              <p style={{fontSize:'14px',color:'var(--text-muted)',textAlign:'center',padding:'20px'}}>No scores yet. Be the first! 🚀</p>
+            )}
+          </div>
 
           {showReview&&(
             <div style={{paddingBottom:'40px'}}>
